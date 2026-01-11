@@ -1,12 +1,15 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
-use std::fs;
+use std::fs::File; 
+use std::io::BufReader;
 use std::path::Path;
 
+use sqlparser::dialect::GenericDialect;
+use sqlparser::parser::Parser;
+use sqlparser::ast::{Statement, DataType, SetExpr, Values};
+
 // 1. Data Types
-// This Enum defines what kind of data our database supports.
-// keeping it simple: Integer (i64), Float (f64), Text (String), and Boolean.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum Value {
     Integer(i64),
@@ -17,22 +20,17 @@ pub enum Value {
 }
 
 // 2. The Row
-// A row is just a map of Column Name -> Value.
-// We use BTreeMap because it keeps columns sorted, making it easier to read debugging output.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Row {
-    pub id: u32, // Every row will have a hidden auto-incrementing ID
+    pub id: u32,
     pub data: BTreeMap<String, Value>,
 }
 
 // 3. The Table
-// A table has a name, a schema (column definitions), and the actual data.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Table {
     pub name: String,
-    pub columns: HashMap<String, String>, // Maps "age" -> "Integer"
-    // We use a BTreeMap for storage. The Key is the ID (u32), the Value is the Row.
-    // BTreeMap is efficient for finding items by ID.
+    pub columns: HashMap<String, String>,
     pub data: BTreeMap<u32, Row>,
     pub last_id: u32,
 }
@@ -49,7 +47,6 @@ impl Table {
 }
 
 // 4. The Database Manager
-// This holds all our tables and handles saving/loading from disk.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Database {
     pub tables: HashMap<String, Table>,
@@ -62,37 +59,57 @@ impl Database {
         }
     }
 
-    // Save state to a file named "mydb.rdb"
     pub fn save_to_disk(&self) -> Result<(), Box<dyn Error>> {
-        let encoded: Vec<u8> = bincode::serialize(&self)?;
-        fs::write("mydb.rdb", encoded)?;
+        let file = File::create("mydb.json")?;
+        serde_json::to_writer_pretty(file, &self)?;
         Ok(())
     }
 
-    // Load state from disk
     pub fn load_from_disk() -> Result<Self, Box<dyn Error>> {
-        if Path::new("mydb.rdb").exists() {
-            let data = fs::read("mydb.rdb")?;
-            let db: Database = bincode::deserialize(&data)?;
+        if Path::new("mydb.json").exists() {
+            let file = File::open("mydb.json")?;
+            let reader = BufReader::new(file);
+            let db: Database = serde_json::from_reader(reader)?;
             return Ok(db);
         }
         Ok(Database::new())
     }
 }
 
-// 5. The Main Entry Point (The REPL)
+// 5. The Main Entry Point
 fn main() -> Result<(), Box<dyn Error>> {
-    println!("Welcome to RustDB!");
-    println!("Loading database...");
-
-    // Load existing DB or create a new one
+    let args: Vec<String> = std::env::args().collect();
     let mut db = Database::load_from_disk().unwrap_or_else(|_| Database::new());
 
-    // Set up the interactive shell (REPL)
-    let mut rl = rustyline::DefaultEditor::new()?;
+    // MODE 1: One-Shot Command (for Web App)
+    if args.len() > 1 {
+        let input = &args[1];
+        let dialect = GenericDialect {};
+        let ast = Parser::parse_sql(&dialect, input);
+        
+        match ast {
+            Ok(statements) => {
+                if !statements.is_empty() {
+                    match process_command(&mut db, &statements[0]) {
+                        Ok(msg) => {
+                            println!("{}", msg);
+                            db.save_to_disk()?;
+                        }
+                        Err(e) => eprintln!("Error: {}", e),
+                    }
+                }
+            }
+            Err(e) => eprintln!("SQL Syntax Error: {:?}", e),
+        }
+        return Ok(());
+    }
+
+    // MODE 2: Interactive REPL
+    println!("Welcome to RustDB!");
+    println!("Loading database...");
     
+    let mut rl = rustyline::DefaultEditor::new()?;
     loop {
-        // Read the line
         let readline = rl.readline("rdb > ");
         match readline {
             Ok(line) => {
@@ -102,18 +119,132 @@ fn main() -> Result<(), Box<dyn Error>> {
                     db.save_to_disk()?;
                     break;
                 }
-                
-                // Add to history so you can press Up Arrow
                 let _ = rl.add_history_entry(input);
 
-                // placeholder for where we will process SQL
-                println!("You typed: {}", input); 
+                let dialect = GenericDialect {};
+                let ast = Parser::parse_sql(&dialect, input);
+
+                match ast {
+                    Ok(statements) => {
+                        if statements.is_empty() { continue; }
+                        match process_command(&mut db, &statements[0]) {
+                            Ok(msg) => println!("Success: {}", msg),
+                            Err(e) => println!("Error: {}", e),
+                        }
+                    }
+                    Err(e) => println!("SQL Syntax Error: {:?}", e),
+                }
             }
-            Err(_) => {
-                println!("Error reading input, exiting.");
-                break;
-            }
+            Err(_) => break,
         }
     }
     Ok(())
+}
+
+// 6. The Brain (Adjusted for sqlparser 0.39.0)
+fn process_command(db: &mut Database, stmt: &Statement) -> Result<String, String> {
+    match stmt {
+        // CREATE TABLE
+        Statement::CreateTable { name, columns, .. } => {
+            let table_name = name.to_string();
+            if db.tables.contains_key(&table_name) {
+                return Err(format!("Table '{}' already exists", table_name));
+            }
+            let mut table = Table::new(table_name.clone());
+            for col in columns {
+                let col_name = col.name.to_string();
+                let col_type = match col.data_type {
+                    DataType::Int(_) => "Integer",
+                    DataType::Float(_) => "Float",
+                    DataType::Text => "Text",
+                    DataType::Boolean => "Bool",
+                    _ => return Err(format!("Unsupported type: {:?}", col.data_type)),
+                };
+                table.columns.insert(col_name, col_type.to_string());
+            }
+            db.tables.insert(table_name.clone(), table);
+            Ok(format!("Table '{}' created", table_name))
+        }
+
+        // INSERT (Fixed for 0.39.0)
+        Statement::Insert { table_name, source, .. } => {
+            let name = table_name.to_string();
+            let table = db.tables.get_mut(&name).ok_or(format!("Table '{}' not found", name))?;
+            
+            // In 0.39.0, source.body is a Box<SetExpr>, not an Option
+            match &*source.body {
+                SetExpr::Values(Values { rows, .. }) => {
+                    let mut count = 0;
+                    for row_expr in rows {
+                        let mut row_data = BTreeMap::new();
+                        let mut cols_iter = table.columns.keys(); 
+
+                        for expr in row_expr {
+                            let col_name = cols_iter.next().ok_or("Too many values for table columns")?;
+                            
+                            // In 0.39.0, Expr::Value wraps the value directly (no .value field)
+                            let value = match expr {
+                                sqlparser::ast::Expr::Value(v) => match v {
+                                    sqlparser::ast::Value::Number(n, _) => {
+                                        if n.contains('.') {
+                                            Value::Float(n.parse().unwrap_or(0.0))
+                                        } else {
+                                            Value::Integer(n.parse().unwrap_or(0))
+                                        }
+                                    },
+                                    sqlparser::ast::Value::SingleQuotedString(s) => Value::Text(s.clone()),
+                                    // In 0.39.0, Boolean(bool) holds the bool directly, not a reference
+                                    sqlparser::ast::Value::Boolean(b) => Value::Bool(*b),
+                                    _ => Value::Null,
+                                },
+                                _ => Value::Null,
+                            };
+                            
+                            row_data.insert(col_name.clone(), value);
+                        }
+                        
+                        table.last_id += 1;
+                        table.data.insert(table.last_id, Row { id: table.last_id, data: row_data });
+                        count += 1;
+                    }
+                    Ok(format!("Inserted {} rows", count))
+                }
+                _ => Err("Only INSERT VALUES is supported".to_string()),
+            }
+        }
+
+        // SELECT (Fixed for 0.39.0)
+        Statement::Query(query) => {
+            if let SetExpr::Select(select) = &*query.body {
+                let table_name = &select.from[0].relation; 
+                let name = table_name.to_string();
+                let table = db.tables.get(&name).ok_or(format!("Table '{}' not found", name))?;
+
+                let headers: Vec<&String> = table.columns.keys().collect();
+                println!("ID | {}", headers.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(" | "));
+                println!("{}", "-".repeat(20));
+
+                for row in table.data.values() {
+                    let mut values = vec![];
+                    for col in &headers {
+                        let val = row.data.get(*col).unwrap_or(&Value::Null);
+                        let v_str = match val {
+                            Value::Integer(i) => i.to_string(),
+                            Value::Float(f) => f.to_string(),
+                            Value::Text(t) => t.clone(),
+                            Value::Bool(b) => b.to_string(),
+                            Value::Null => "NULL".to_string(),
+                        };
+                        values.push(v_str);
+                    }
+                    println!("{}  | {}", row.id, values.join(" | "));
+                }
+                Ok(format!("Returned {} rows", table.data.len()))
+            } else {
+                Err("Only SELECT statements supported".to_string())
+            }
+        }
+
+        _ => Err("SQL command not supported yet".to_string()),
+    }
 }

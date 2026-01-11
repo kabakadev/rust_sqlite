@@ -1,0 +1,25 @@
+{
+  "tables": {
+    "users": {
+      "name": "users",
+      "columns": {
+        "name": "Text",
+        "age": "Integer"
+      },
+      "data": {
+        "1": {
+          "id": 1,
+          "data": {
+            "age": {
+              "Text": "Ian"
+            },
+            "name": {
+              "Integer": 25
+            }
+          }
+        }
+      },
+      "last_id": 1
+    }
+  }
+}

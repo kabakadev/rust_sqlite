@@ -5,8 +5,8 @@ edition = "2024"
 
 [dependencies]
 rustyline = "17.0.2"
-serde = "1.0.228"
+serde = { version = "1.0.228", features = ["derive"] }
 serde_derive = "1.0.228"
 serde_json = "1.0.149"
-sqlparser = "0.60.0"
+sqlparser = "0.39.0"
 thiserror = "2.0.17"
