@@ -30,7 +30,7 @@ pub struct Row {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Table {
     pub name: String,
-    pub columns: HashMap<String, String>,
+   pub columns: Vec<(String, String)>,
     pub data: BTreeMap<u32, Row>,
     pub last_id: u32,
 }
@@ -39,7 +39,7 @@ impl Table {
     pub fn new(name: String) -> Self {
         Table {
             name,
-            columns: HashMap::new(),
+           columns: Vec::new(),
             data: BTreeMap::new(),
             last_id: 0,
         }
@@ -160,7 +160,7 @@ fn process_command(db: &mut Database, stmt: &Statement) -> Result<String, String
                     DataType::Boolean => "Bool",
                     _ => return Err(format!("Unsupported type: {:?}", col.data_type)),
                 };
-                table.columns.insert(col_name, col_type.to_string());
+                table.columns.push((col_name, col_type.to_string()));
             }
             db.tables.insert(table_name.clone(), table);
             Ok(format!("Table '{}' created", table_name))
@@ -177,10 +177,10 @@ fn process_command(db: &mut Database, stmt: &Statement) -> Result<String, String
                     let mut count = 0;
                     for row_expr in rows {
                         let mut row_data = BTreeMap::new();
-                        let mut cols_iter = table.columns.keys(); 
+                       let mut cols_iter = table.columns.iter();
 
                         for expr in row_expr {
-                            let col_name = cols_iter.next().ok_or("Too many values for table columns")?;
+                            let (col_name, _col_type) = cols_iter.next().ok_or("Too many values")?;
                             
                             // In 0.39.0, Expr::Value wraps the value directly (no .value field)
                             let value = match expr {
@@ -220,7 +220,7 @@ fn process_command(db: &mut Database, stmt: &Statement) -> Result<String, String
                 let name = table_name.to_string();
                 let table = db.tables.get(&name).ok_or(format!("Table '{}' not found", name))?;
 
-                let headers: Vec<&String> = table.columns.keys().collect();
+                let headers: Vec<&String> = table.columns.iter().map(|(name, _)| name).collect();
                 println!("ID | {}", headers.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(" | "));
                 println!("{}", "-".repeat(20));
 
