@@ -1,62 +1,26 @@
 {
   "tables": {
-    "test_persist": {
-      "name": "test_persist",
-      "columns": {
-        "val": "Text",
-        "id": "Integer"
-      },
-      "data": {
-        "1": {
-          "id": 1,
-          "data": {
-            "id": {
-              "Integer": 1
-            },
-            "val": {
-              "Text": "I survive!"
-            }
-          }
-        }
-      },
-      "last_id": 1
-    },
-    "bug_test": {
-      "name": "bug_test",
-      "columns": {
-        "age": "Integer",
-        "name": "Text"
-      },
+    "bug_test_version2": {
+      "name": "bug_test_version2",
+      "columns": [
+        [
+          "name",
+          "Text"
+        ],
+        [
+          "age",
+          "Integer"
+        ]
+      ],
       "data": {
         "1": {
           "id": 1,
           "data": {
             "age": {
+              "Integer": 25
+            },
+            "name": {
               "Text": "Alice"
-            },
-            "name": {
-              "Integer": 25
-            }
-          }
-        }
-      },
-      "last_id": 1
-    },
-    "users": {
-      "name": "users",
-      "columns": {
-        "age": "Integer",
-        "name": "Text"
-      },
-      "data": {
-        "1": {
-          "id": 1,
-          "data": {
-            "age": {
-              "Text": "Ian"
-            },
-            "name": {
-              "Integer": 25
             }
           }
         }

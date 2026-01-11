@@ -166,23 +166,22 @@ fn process_command(db: &mut Database, stmt: &Statement) -> Result<String, String
             Ok(format!("Table '{}' created", table_name))
         }
 
-        // INSERT (Fixed for 0.39.0)
+    // INSERT
         Statement::Insert { table_name, source, .. } => {
             let name = table_name.to_string();
             let table = db.tables.get_mut(&name).ok_or(format!("Table '{}' not found", name))?;
             
-            // In 0.39.0, source.body is a Box<SetExpr>, not an Option
             match &*source.body {
                 SetExpr::Values(Values { rows, .. }) => {
                     let mut count = 0;
                     for row_expr in rows {
                         let mut row_data = BTreeMap::new();
-                       let mut cols_iter = table.columns.iter();
+                        let mut cols_iter = table.columns.iter(); 
 
                         for expr in row_expr {
-                            let (col_name, _col_type) = cols_iter.next().ok_or("Too many values")?;
+                            let (col_name, col_type) = cols_iter.next().ok_or("Too many values for table columns")?;
                             
-                            // In 0.39.0, Expr::Value wraps the value directly (no .value field)
+                            // 1. Convert AST to our Value
                             let value = match expr {
                                 sqlparser::ast::Expr::Value(v) => match v {
                                     sqlparser::ast::Value::Number(n, _) => {
@@ -193,12 +192,29 @@ fn process_command(db: &mut Database, stmt: &Statement) -> Result<String, String
                                         }
                                     },
                                     sqlparser::ast::Value::SingleQuotedString(s) => Value::Text(s.clone()),
-                                    // In 0.39.0, Boolean(bool) holds the bool directly, not a reference
                                     sqlparser::ast::Value::Boolean(b) => Value::Bool(*b),
-                                    _ => Value::Null,
+                                    sqlparser::ast::Value::Null => Value::Null,
+                                    _ => return Err("Unsupported value format".to_string()),
                                 },
-                                _ => Value::Null,
+                                _ => return Err("Unsupported expression type".to_string()),
                             };
+
+                            // 2. TYPE CHECK: Verify value matches column schema
+                            match (col_type.as_str(), &value) {
+                                ("Integer", Value::Integer(_)) => {},
+                                ("Float", Value::Float(_)) => {},
+                                ("Text", Value::Text(_)) => {},
+                                ("Bool", Value::Bool(_)) => {},
+                                (_, Value::Null) => {}, // Allow NULL for any type (for now)
+                                // Special case: Allow Integer to be promoted to Float if needed? 
+                                // For strictness, let's fail.
+                                (expected, actual) => {
+                                    return Err(format!(
+                                        "Type Mismatch! Column '{}' expects {}, but got {:?}", 
+                                        col_name, expected, actual
+                                    ));
+                                }
+                            }
                             
                             row_data.insert(col_name.clone(), value);
                         }
@@ -212,6 +228,7 @@ fn process_command(db: &mut Database, stmt: &Statement) -> Result<String, String
                 _ => Err("Only INSERT VALUES is supported".to_string()),
             }
         }
+        
 
         // SELECT (Fixed for 0.39.0)
         Statement::Query(query) => {
