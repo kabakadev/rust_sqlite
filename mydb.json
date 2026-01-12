@@ -1,0 +1,83 @@
+{
+  "tables": {
+    "products": {
+      "name": "products",
+      "columns": [
+        [
+          "id",
+          "Integer"
+        ],
+        [
+          "name",
+          "Text"
+        ],
+        [
+          "price",
+          "Float"
+        ],
+        [
+          "stock",
+          "Integer"
+        ],
+        [
+          "category_id",
+          "Integer"
+        ]
+      ],
+      "unique_columns": [],
+      "data": {
+        "45057": {
+          "id": 45057,
+          "data": {
+            "category_id": {
+              "Integer": 7641
+            },
+            "id": {
+              "Integer": 45057
+            },
+            "name": {
+              "Text": "Laptop"
+            },
+            "price": {
+              "Float": 1200.0
+            },
+            "stock": {
+              "Integer": 3
+            }
+          }
+        }
+      },
+      "last_id": 45057
+    },
+    "categories": {
+      "name": "categories",
+      "columns": [
+        [
+          "id",
+          "Integer"
+        ],
+        [
+          "name",
+          "Text"
+        ]
+      ],
+      "unique_columns": [
+        "name"
+      ],
+      "data": {
+        "7641": {
+          "id": 7641,
+          "data": {
+            "id": {
+              "Integer": 7641
+            },
+            "name": {
+              "Text": "Tech"
+            }
+          }
+        }
+      },
+      "last_id": 7641
+    }
+  }
+}

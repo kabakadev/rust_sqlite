@@ -15,8 +15,29 @@ async function queryDB(sql) {
     if (!response.ok) throw new Error(text);
     return text;
   } catch (e) {
-    console.error("DB Error:", e);
+    // console.error("DB Error:", e); // Optional: Comment this out to reduce noise
     throw e;
+  }
+}
+
+// --- NEW: AUTO-INITIALIZATION ---
+async function initDB() {
+  console.log("Bootstrapping Database...");
+  try {
+    // Try to create Categories table
+    // We ignore errors because if it exists, that's fine!
+    await queryDB("CREATE TABLE categories (id INT, name TEXT UNIQUE)").catch(
+      () => {}
+    );
+    console.log("✔ Categories Table Ready");
+
+    // Try to create Products table
+    await queryDB(
+      "CREATE TABLE products (id INT, name TEXT, price FLOAT, stock INT, category_id INT)"
+    ).catch(() => {});
+    console.log("✔ Products Table Ready");
+  } catch (e) {
+    console.error("Bootstrap Failed:", e);
   }
 }
 
@@ -43,9 +64,7 @@ function parseOutput(text) {
   return data;
 }
 
-// --- ROUTES ---
-
-// 1. GET ALL INVENTORY
+// --- ROUTES (Same as before) ---
 app.get("/api/inventory", async (req, res) => {
   try {
     const sql =
@@ -57,7 +76,6 @@ app.get("/api/inventory", async (req, res) => {
   }
 });
 
-// 2. GET CATEGORIES (For Dropdown) <--- NEW
 app.get("/api/categories", async (req, res) => {
   try {
     const raw = await queryDB("SELECT * FROM categories");
@@ -67,15 +85,13 @@ app.get("/api/categories", async (req, res) => {
   }
 });
 
-// 3. ADD PRODUCT (Fixed Float Issue)
 app.post("/api/products", async (req, res) => {
   let { name, price, stock, category_id } = req.body;
   try {
-    // FIX: Force price to look like a float for RustDB (e.g. 1200 -> "1200.0")
     if (!price.toString().includes(".")) {
       price = `${price}.0`;
     }
-
+    // Use random ID for Primary Key
     const id = Math.floor(Math.random() * 100000);
     await queryDB(
       `INSERT INTO products VALUES (${id}, '${name}', ${price}, ${stock}, ${category_id})`
@@ -86,7 +102,6 @@ app.post("/api/products", async (req, res) => {
   }
 });
 
-// 4. ADD CATEGORY
 app.post("/api/categories", async (req, res) => {
   const { name } = req.body;
   try {
@@ -98,7 +113,6 @@ app.post("/api/categories", async (req, res) => {
   }
 });
 
-// 5. SELL ITEM
 app.post("/api/sell/:id", async (req, res) => {
   const id = req.params.id;
   try {
@@ -119,7 +133,6 @@ app.post("/api/sell/:id", async (req, res) => {
   }
 });
 
-// 6. DELETE PRODUCT
 app.delete("/api/products/:id", async (req, res) => {
   try {
     await queryDB(`DELETE FROM products WHERE id = ${req.params.id}`);
@@ -129,6 +142,10 @@ app.delete("/api/products/:id", async (req, res) => {
   }
 });
 
-app.listen(3000, () => {
+// STARTUP SEQUENCE
+app.listen(3000, async () => {
+  // 1. Initialize Tables
+  await initDB();
+  // 2. Start Server
   console.log("RustMart API running on http://localhost:3000");
 });
