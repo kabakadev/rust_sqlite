@@ -170,9 +170,16 @@ fn process_command(db: &mut Database, stmt: &Statement) -> Result<String, String
                             }
                         }
 
-                        table.last_id += 1;
-                        table.data.insert(table.last_id, Row { id: table.last_id, data: row_data });
-                        count += 1;
+                        let row_id = if let Some(Value::Integer(provided_id)) = row_data.get("id") {
+                            *provided_id as u32 // Use user's ID (e.g. 96600)
+                        } else {
+                            table.last_id + 1 // Auto-increment if no ID provided
+                        };
+                        if row_id > table.last_id {
+                            table.last_id = row_id;
+                        }
+                       table.data.insert(row_id, Row { id: row_id, data: row_data });
+                       count += 1;
                     }
                     Ok(format!("Inserted {} rows", count))
                 }

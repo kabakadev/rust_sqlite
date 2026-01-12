@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RustMart Inventory</title>
+    <style>
+      body {
+        font-family: sans-serif;
+        max-width: 800px;
+        margin: 2rem auto;
+        padding: 0 1rem;
+      }
+      h1 {
+        color: #d35400;
+      }
+      .card {
+        border: 1px solid #ddd;
+        padding: 1rem;
+        margin-bottom: 1rem;
+        border-radius: 8px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: 2fr 1fr;
+        gap: 2rem;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 1rem;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 0.5rem;
+        border-bottom: 1px solid #eee;
+      }
+      button {
+        background: #333;
+        color: white;
+        border: none;
+        padding: 0.5rem 1rem;
+        cursor: pointer;
+      }
+      button:hover {
+        background: #555;
+      }
+      .sell-btn {
+        background: #27ae60;
+      }
+      .del-btn {
+        background: #c0392b;
+      }
+      input,
+      select {
+        padding: 0.5rem;
+        margin-bottom: 0.5rem;
+        width: 100%;
+        box-sizing: border-box;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>RustMart 📦</h1>
+    <p>Powered by RustDB & Node.js</p>
+
+    <div class="grid">
+      <div class="card">
+        <h3>Add New Product</h3>
+        <input
+          type="text"
+          id="pName"
+          placeholder="Product Name (e.g. Laptop)"
+        />
+        <input type="number" id="pPrice" placeholder="Price" />
+        <input type="number" id="pStock" placeholder="Stock Qty" />
+
+        <label for="pCatId" style="font-size: 0.9rem; color: #666"
+          >Category:</label
+        >
+        <select id="pCatId">
+          <option value="" disabled selected>Select a Category...</option>
+        </select>
+
+        <button onclick="addProduct()">Add to Inventory</button>
+      </div>
+
+      <div class="card">
+        <h3>Add Category</h3>
+        <input type="text" id="cName" placeholder="Category Name (e.g. Tech)" />
+        <button onclick="addCategory()">Create Category</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Current Inventory</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Product</th>
+            <th>Category</th>
+            <th>Price</th>
+            <th>Stock</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="invTable"></tbody>
+      </table>
+    </div>
+
+    <script>
+      const API = "http://localhost:3000/api";
+
+      async function loadCategories() {
+        const res = await fetch(`${API}/categories`);
+        const data = await res.json();
+        const select = document.getElementById("pCatId");
+
+        // Keep the default option
+        select.innerHTML =
+          '<option value="" disabled selected>Select a Category...</option>';
+
+        data.forEach((cat) => {
+          const option = document.createElement("option");
+          option.value = cat.id; // The value sent to DB
+          option.textContent = cat.name; // The text user sees
+          select.appendChild(option);
+        });
+      }
+
+      async function loadInventory() {
+        const res = await fetch(`${API}/inventory`);
+        const data = await res.json();
+        const tbody = document.getElementById("invTable");
+        tbody.innerHTML = "";
+
+        data.forEach((item) => {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+                    <td>${item["products.id"] || item.id}</td>
+                    <td><b>${item["products.name"] || item.name}</b></td>
+                    <td>${item["categories.name"] || "Unknown"}</td>
+                    <td>$${item["products.price"] || item.price}</td>
+                    <td>${item["products.stock"] || item.stock}</td>
+                    <td>
+                        <button class="sell-btn" onclick="sellItem(${
+                          item["products.id"] || item.id
+                        })">Sell (-1)</button>
+                        <button class="del-btn" onclick="deleteItem(${
+                          item["products.id"] || item.id
+                        })">Del</button>
+                    </td>
+                `;
+          tbody.appendChild(tr);
+        });
+      }
+
+      async function addProduct() {
+        const name = document.getElementById("pName").value;
+        const price = document.getElementById("pPrice").value;
+        const stock = document.getElementById("pStock").value;
+        const catId = document.getElementById("pCatId").value;
+
+        if (!catId) {
+          alert("Please select a category!");
+          return;
+        }
+
+        const res = await fetch(`${API}/products`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name, price, stock, category_id: catId }),
+        });
+
+        const data = await res.json();
+
+        // ERROR HANDLING: If the server says "Error", show it!
+        if (!res.ok) {
+          alert("Failed to add product:\n" + data.error);
+          return;
+        }
+
+        // Only reload if successful
+        loadInventory();
+      }
+
+      async function addCategory() {
+        const name = document.getElementById("cName").value;
+
+        const res = await fetch(`${API}/categories`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name }),
+        });
+
+        const data = await res.json();
+
+        // ERROR HANDLING
+        if (!res.ok) {
+          alert("Failed to add category:\n" + data.error);
+          return;
+        }
+
+        loadCategories();
+      }
+      async function sellItem(id) {
+        await fetch(`${API}/sell/${id}`, { method: "POST" });
+        loadInventory();
+      }
+
+      async function deleteItem(id) {
+        await fetch(`${API}/products/${id}`, { method: "DELETE" });
+        loadInventory();
+      }
+
+      // Load both on start
+      loadCategories();
+      loadInventory();
+    </script>
+  </body>
+</html>
