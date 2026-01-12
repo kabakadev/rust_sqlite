@@ -1,29 +1,21 @@
 const express = require("express");
-const { exec } = require("child_process");
-const path = require("path");
+
 const app = express();
 
 app.use(express.json());
 
-// CONFIG: Path to your Rust project
-// We use 'cargo run --quiet --' to run the DB without the compilation logs
-const RUST_PROJECT_PATH = path.join(__dirname, "../"); // Assumes web_demo is inside rust_sqlite
-const DB_COMMAND = `cd ${RUST_PROJECT_PATH} && cargo run --quiet --release --`;
-
-// Helper to run SQL via Rust
-function runSQL(query) {
-  return new Promise((resolve, reject) => {
-    // Escape quotes slightly for bash safety (very basic)
-    const safeQuery = query.replace(/"/g, '\\"');
-
-    exec(`${DB_COMMAND} "${safeQuery}"`, (error, stdout, stderr) => {
-      if (error) {
-        console.error(`Exec error: ${stderr}`);
-        return reject(stderr || error.message);
-      }
-      resolve(stdout.trim());
+async function runSQL(query) {
+  try {
+    const response = await fetch("http://127.0.0.1:8080/query", {
+      method: "POST",
+      body: query,
     });
-  });
+    const text = await response.text();
+    if (!response.ok) throw new Error(text);
+    return text;
+  } catch (e) {
+    throw e;
+  }
 }
 
 // 1. Initialize DB (Route)
@@ -40,14 +32,14 @@ app.get("/init", async (req, res) => {
 app.post("/users", async (req, res) => {
   const { name, age } = req.body;
   try {
-    // Note: Simple string interpolation is vulnerable to SQL Injection!
-    // But for a trivial demo, it works.
     const output = await runSQL(`INSERT INTO users VALUES ('${name}', ${age})`);
     res.send(output);
   } catch (e) {
-    res.status(500).send(e);
+    console.error("Server Error:", e); // Log to terminal
+    res.status(500).send(e.toString()); // Send text to curl, NOT empty JSON
   }
 });
+``;
 
 // 3. List Users (GET)
 app.get("/users", async (req, res) => {

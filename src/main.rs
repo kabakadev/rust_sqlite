@@ -1,17 +1,18 @@
+use actix_web::{post, web, App, HttpResponse, HttpServer, Responder};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
-use std::fs::File; 
+use std::fs::{self, File};
 use std::io::BufReader;
 use std::path::Path;
+use std::sync::Mutex; // NEW: Needed for locking the DB between web requests
 
+// SQL Parser Imports
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
-
-
 use sqlparser::ast::{Statement, DataType, SetExpr, Values, ColumnOption, Join, JoinOperator, JoinConstraint, TableFactor, Expr, BinaryOperator};
 
-// 1. Data Types
+// --- DATA STRUCTURES (Same as before) ---
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum Value {
     Integer(i64),
@@ -21,14 +22,12 @@ pub enum Value {
     Null,
 }
 
-// 2. The Row
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Row {
     pub id: u32,
     pub data: BTreeMap<String, Value>,
 }
 
-// 3. The Table
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Table {
     pub name: String,
@@ -42,15 +41,14 @@ impl Table {
     pub fn new(name: String) -> Self {
         Table {
             name,
-           columns: Vec::new(),
-           unique_columns: Vec::new(),
+            columns: Vec::new(),
+            unique_columns: Vec::new(),
             data: BTreeMap::new(),
             last_id: 0,
         }
     }
 }
 
-// 4. The Database Manager
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Database {
     pub tables: HashMap<String, Table>,
@@ -58,9 +56,7 @@ pub struct Database {
 
 impl Database {
     pub fn new() -> Self {
-        Database {
-            tables: HashMap::new(),
-        }
+        Database { tables: HashMap::new() }
     }
 
     pub fn save_to_disk(&self) -> Result<(), Box<dyn Error>> {
@@ -80,75 +76,11 @@ impl Database {
     }
 }
 
-// 5. The Main Entry Point
-fn main() -> Result<(), Box<dyn Error>> {
-    let args: Vec<String> = std::env::args().collect();
-    let mut db = Database::load_from_disk().unwrap_or_else(|_| Database::new());
-
-    // MODE 1: One-Shot Command (for Web App)
-    if args.len() > 1 {
-        let input = &args[1];
-        let dialect = GenericDialect {};
-        let ast = Parser::parse_sql(&dialect, input);
-        
-        match ast {
-            Ok(statements) => {
-                if !statements.is_empty() {
-                    match process_command(&mut db, &statements[0]) {
-                        Ok(msg) => {
-                            println!("{}", msg);
-                            db.save_to_disk()?;
-                        }
-                        Err(e) => eprintln!("Error: {}", e),
-                    }
-                }
-            }
-            Err(e) => eprintln!("SQL Syntax Error: {:?}", e),
-        }
-        return Ok(());
-    }
-
-    // MODE 2: Interactive REPL
-    println!("Welcome to RustDB!");
-    println!("Loading database...");
-    
-    let mut rl = rustyline::DefaultEditor::new()?;
-    loop {
-        let readline = rl.readline("rdb > ");
-        match readline {
-            Ok(line) => {
-                let input = line.trim();
-                if input.eq_ignore_ascii_case("exit") {
-                    println!("Saving and exiting...");
-                    db.save_to_disk()?;
-                    break;
-                }
-                let _ = rl.add_history_entry(input);
-
-                let dialect = GenericDialect {};
-                let ast = Parser::parse_sql(&dialect, input);
-
-                match ast {
-                    Ok(statements) => {
-                        if statements.is_empty() { continue; }
-                        match process_command(&mut db, &statements[0]) {
-                            Ok(msg) => println!("Success: {}", msg),
-                            Err(e) => println!("Error: {}", e),
-                        }
-                    }
-                    Err(e) => println!("SQL Syntax Error: {:?}", e),
-                }
-            }
-            Err(_) => break,
-        }
-    }
-    Ok(())
-}
-
-// 6. The Brain (Adjusted for sqlparser 0.39.0)
+// --- LOGIC: The Brain ---
+// This handles the SQL logic. It returns a String (success message) or String (error).
 fn process_command(db: &mut Database, stmt: &Statement) -> Result<String, String> {
     match stmt {
-       // CREATE TABLE
+        // CREATE TABLE
         Statement::CreateTable { name, columns, .. } => {
             let table_name = name.to_string();
             if db.tables.contains_key(&table_name) {
@@ -167,7 +99,7 @@ fn process_command(db: &mut Database, stmt: &Statement) -> Result<String, String
                 };
                 table.columns.push((col_name.clone(), col_type.to_string()));
 
-                // CHECK FOR 'UNIQUE' CONSTRAINT
+                // Unique Constraint Check
                 for option in &col.options {
                     if let ColumnOption::Unique { .. } = &option.option {
                         table.unique_columns.push(col_name.clone());
@@ -178,7 +110,7 @@ fn process_command(db: &mut Database, stmt: &Statement) -> Result<String, String
             Ok(format!("Table '{}' created", table_name))
         }
 
-    // INSERT
+        // INSERT
         Statement::Insert { table_name, source, .. } => {
             let name = table_name.to_string();
             let table = db.tables.get_mut(&name).ok_or(format!("Table '{}' not found", name))?;
@@ -188,7 +120,6 @@ fn process_command(db: &mut Database, stmt: &Statement) -> Result<String, String
                     let mut count = 0;
                     for row_expr in rows {
                         let mut row_data = BTreeMap::new();
-
                         let mut cols_iter = table.columns.iter(); 
 
                         for expr in row_expr {
@@ -212,41 +143,33 @@ fn process_command(db: &mut Database, stmt: &Statement) -> Result<String, String
                                 _ => return Err("Unsupported expression type".to_string()),
                             };
 
-                            // 2. TYPE CHECK: Verify value matches column schema
+                            // 2. TYPE CHECK
                             match (col_type.as_str(), &value) {
                                 ("Integer", Value::Integer(_)) => {},
                                 ("Float", Value::Float(_)) => {},
                                 ("Text", Value::Text(_)) => {},
                                 ("Bool", Value::Bool(_)) => {},
-                                (_, Value::Null) => {}, // Allow NULL for any type (for now)
-                                // Special case: Allow Integer to be promoted to Float if needed? 
-                                // For strictness, let's fail.
+                                (_, Value::Null) => {}, 
                                 (expected, actual) => {
-                                    return Err(format!(
-                                        "Type Mismatch! Column '{}' expects {}, but got {:?}", 
-                                        col_name, expected, actual
-                                    ));
+                                    return Err(format!("Type Mismatch! Column '{}' expects {}, but got {:?}", col_name, expected, actual));
                                 }
                             }
-                            
                             row_data.insert(col_name.clone(), value);
                         }
+                        
+                        // 3. UNIQUE CHECK
                         for unique_col in &table.unique_columns {
                             if let Some(new_val) = row_data.get(unique_col) {
-                                // Scan all existing rows
                                 for existing_row in table.data.values() {
                                     if let Some(existing_val) = existing_row.data.get(unique_col) {
                                         if existing_val == new_val {
-                                            return Err(format!(
-                                                "Unique constraint violation: Column '{}' already has value {:?}", 
-                                                unique_col, new_val
-                                            ));
+                                            return Err(format!("Unique constraint violation: Column '{}' already has value {:?}", unique_col, new_val));
                                         }
                                     }
                                 }
                             }
                         }
-                        
+
                         table.last_id += 1;
                         table.data.insert(table.last_id, Row { id: table.last_id, data: row_data });
                         count += 1;
@@ -256,33 +179,27 @@ fn process_command(db: &mut Database, stmt: &Statement) -> Result<String, String
                 _ => Err("Only INSERT VALUES is supported".to_string()),
             }
         }
-        
 
-       // SELECT (With JOIN Support)
+        // SELECT (With JOIN Support)
         Statement::Query(query) => {
             if let SetExpr::Select(select) = &*query.body {
-                // 1. Get Left Table
                 let left_table_name = match &select.from[0].relation {
                     TableFactor::Table { name, .. } => name.to_string(),
                     _ => return Err("Only simple table names supported".to_string()),
                 };
                 let left_table = db.tables.get(&left_table_name).ok_or(format!("Table '{}' not found", left_table_name))?;
 
-                // 2. Check for JOIN
                 if !select.from[0].joins.is_empty() {
-                    let join = &select.from[0].joins[0]; // We only handle 1 join for now
-                    
-                    // Get Right Table Name
+                    // --- JOIN LOGIC ---
+                    let join = &select.from[0].joins[0]; 
                     let right_table_name = match &join.relation {
                         TableFactor::Table { name, .. } => name.to_string(),
                         _ => return Err("Only simple table joins supported".to_string()),
                     };
                     let right_table = db.tables.get(&right_table_name).ok_or(format!("Table '{}' not found", right_table_name))?;
 
-                    // Parse the ON condition: ON left.col = right.col
                     let (left_col_name, right_col_name) = match &join.join_operator {
                         JoinOperator::Inner(JoinConstraint::On(Expr::BinaryOp { left, op: BinaryOperator::Eq, right })) => {
-                            // Helper to extract "col" from "table.col" or just "col"
                             fn extract_col(expr: &Expr) -> Option<String> {
                                 match expr {
                                     Expr::Identifier(ident) => Some(ident.value.clone()),
@@ -295,55 +212,43 @@ fn process_command(db: &mut Database, stmt: &Statement) -> Result<String, String
                                 _ => return Err("Unsupported ON condition".to_string()),
                             }
                         },
-                        _ => return Err("Only INNER JOIN ... ON table.col = table.col supported".to_string()),
+                        _ => return Err("Only INNER JOIN ... ON supported".to_string()),
                     };
 
-                    // 3. Print Combined Headers
+                    // Headers
                     let mut headers = vec![];
                     for (col, _) in &left_table.columns { headers.push(format!("{}.{}", left_table_name, col)); }
                     for (col, _) in &right_table.columns { headers.push(format!("{}.{}", right_table_name, col)); }
-                    println!("{}", headers.join(" | "));
-                    println!("{}", "-".repeat(headers.len() * 10));
+                    
+                    let mut output_lines = Vec::new();
+                    output_lines.push(headers.join(" | ")); // Header row
 
-                    // 4. NESTED LOOP JOIN (O(N*M) - Slow but simple)
-                    let mut found_count = 0;
+                    // Loop
                     for left_row in left_table.data.values() {
                         for right_row in right_table.data.values() {
-                            
-                            // Check Condition
                             let l_val = left_row.data.get(&left_col_name).unwrap_or(&Value::Null);
                             let r_val = right_row.data.get(&right_col_name).unwrap_or(&Value::Null);
 
                             if l_val != &Value::Null && l_val == r_val {
-                                // MATCH FOUND! Merge and Print
                                 let mut row_strs = vec![];
-                                
-                                // Print Left Columns
-                                for (col, _) in &left_table.columns {
-                                    row_strs.push(format!("{:?}", left_row.data.get(col).unwrap_or(&Value::Null)));
-                                }
-                                // Print Right Columns
-                                for (col, _) in &right_table.columns {
-                                    row_strs.push(format!("{:?}", right_row.data.get(col).unwrap_or(&Value::Null)));
-                                }
-                                println!("{}", row_strs.join(" | "));
-                                found_count += 1;
+                                for (col, _) in &left_table.columns { row_strs.push(format!("{:?}", left_row.data.get(col).unwrap_or(&Value::Null))); }
+                                for (col, _) in &right_table.columns { row_strs.push(format!("{:?}", right_row.data.get(col).unwrap_or(&Value::Null))); }
+                                output_lines.push(row_strs.join(" | "));
                             }
                         }
                     }
-                    Ok(format!("Returned {} joined rows", found_count))
+                    Ok(output_lines.join("\n"))
 
                 } else {
-                    // --- OLD LOGIC (No Join) ---
+                    // --- STANDARD SELECT (No Join) ---
                     let headers: Vec<&str> = left_table.columns.iter().map(|(name, _)| name.as_str()).collect();
-                    println!("ID | {}", headers.join(" | "));
-                    println!("{}", "-".repeat(20));
+                    let mut output_lines = Vec::new();
+                    output_lines.push(format!("ID | {}", headers.join(" | ")));
 
                     for row in left_table.data.values() {
                         let mut values = vec![];
                         for col in &headers {
                             let val = row.data.get(*col).unwrap_or(&Value::Null);
-                            // Simple Display
                             let v_str = match val {
                                 Value::Integer(i) => i.to_string(),
                                 Value::Float(f) => f.to_string(),
@@ -353,9 +258,9 @@ fn process_command(db: &mut Database, stmt: &Statement) -> Result<String, String
                             };
                             values.push(v_str);
                         }
-                        println!("{}  | {}", row.id, values.join(" | "));
+                        output_lines.push(format!("{}  | {}", row.id, values.join(" | ")));
                     }
-                    Ok(format!("Returned {} rows", left_table.data.len()))
+                    Ok(output_lines.join("\n"))
                 }
             } else {
                 Err("Only SELECT statements supported".to_string())
@@ -364,4 +269,54 @@ fn process_command(db: &mut Database, stmt: &Statement) -> Result<String, String
 
         _ => Err("SQL command not supported yet".to_string()),
     }
+}
+
+// --- API HANDLER ---
+// This allows Node.js to talk to Rust over HTTP
+#[post("/query")]
+async fn query_endpoint(req_body: String, db: web::Data<Mutex<Database>>) -> impl Responder {
+    let input = req_body.trim();
+    let dialect = GenericDialect {};
+    let ast = Parser::parse_sql(&dialect, input);
+
+    match ast {
+        Ok(statements) => {
+            if statements.is_empty() { return HttpResponse::BadRequest().body("Empty query"); }
+            
+            // LOCK THE DB so only one request happens at a time
+            let mut db_guard = db.lock().unwrap();
+            
+            match process_command(&mut *db_guard, &statements[0]) {
+                Ok(msg) => {
+                    // Auto-save logic
+                    let _ = db_guard.save_to_disk();
+                    HttpResponse::Ok().body(msg)
+                },
+                Err(e) => HttpResponse::BadRequest().body(format!("Error: {}", e)),
+            }
+        }
+        Err(e) => HttpResponse::BadRequest().body(format!("SQL Syntax Error: {:?}", e)),
+    }
+}
+
+// --- MAIN SERVER LOOP ---
+#[actix_web::main]
+async fn main() -> std::io::Result<()> {
+    println!("Starting RustDB Server on port 8080...");
+    
+    // 1. Load DB from disk
+    let db = Database::load_from_disk().unwrap_or_else(|_| Database::new());
+    
+    // 2. Wrap it in a Mutex (Thread Safe Lock)
+    let db_data = web::Data::new(Mutex::new(db));
+
+    // 3. Start the Web Server
+    HttpServer::new(move || {
+        App::new()
+            .app_data(db_data.clone()) // Share DB with all workers
+            .service(query_endpoint)   // Open the /query API
+    })
+    .bind(("127.0.0.1", 8080))?
+    .run()
+    .await
 }
