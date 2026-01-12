@@ -25,28 +25,7 @@
         ]
       ],
       "unique_columns": [],
-      "data": {
-        "45057": {
-          "id": 45057,
-          "data": {
-            "category_id": {
-              "Integer": 7641
-            },
-            "id": {
-              "Integer": 45057
-            },
-            "name": {
-              "Text": "Laptop"
-            },
-            "price": {
-              "Float": 1200.0
-            },
-            "stock": {
-              "Integer": 3
-            }
-          }
-        }
-      },
+      "data": {},
       "last_id": 45057
     },
     "categories": {

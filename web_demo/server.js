@@ -15,7 +15,7 @@ async function queryDB(sql) {
     if (!response.ok) throw new Error(text);
     return text;
   } catch (e) {
-    // console.error("DB Error:", e); // Optional: Comment this out to reduce noise
+    console.error("DB Error:", e); // Optional: Comment this out to reduce noise
     throw e;
   }
 }
