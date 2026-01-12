@@ -1,26 +1,29 @@
 {
   "tables": {
-    "bug_test_version2": {
-      "name": "bug_test_version2",
+    "members": {
+      "name": "members",
       "columns": [
         [
-          "name",
-          "Text"
+          "id",
+          "Integer"
         ],
         [
-          "age",
-          "Integer"
+          "email",
+          "Text"
         ]
+      ],
+      "unique_columns": [
+        "email"
       ],
       "data": {
         "1": {
           "id": 1,
           "data": {
-            "age": {
-              "Integer": 25
+            "email": {
+              "Text": "ian@test.com"
             },
-            "name": {
-              "Text": "Alice"
+            "id": {
+              "Integer": 1
             }
           }
         }

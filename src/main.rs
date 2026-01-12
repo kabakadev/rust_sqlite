@@ -7,7 +7,8 @@ use std::path::Path;
 
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
-use sqlparser::ast::{Statement, DataType, SetExpr, Values};
+
+use sqlparser::ast::{Statement, DataType, SetExpr, Values, ColumnOption}; 
 
 // 1. Data Types
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -30,7 +31,8 @@ pub struct Row {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Table {
     pub name: String,
-   pub columns: Vec<(String, String)>,
+    pub columns: Vec<(String, String)>,
+    pub unique_columns: Vec<String>,
     pub data: BTreeMap<u32, Row>,
     pub last_id: u32,
 }
@@ -40,6 +42,7 @@ impl Table {
         Table {
             name,
            columns: Vec::new(),
+           unique_columns: Vec::new(),
             data: BTreeMap::new(),
             last_id: 0,
         }
@@ -144,13 +147,14 @@ fn main() -> Result<(), Box<dyn Error>> {
 // 6. The Brain (Adjusted for sqlparser 0.39.0)
 fn process_command(db: &mut Database, stmt: &Statement) -> Result<String, String> {
     match stmt {
-        // CREATE TABLE
+       // CREATE TABLE
         Statement::CreateTable { name, columns, .. } => {
             let table_name = name.to_string();
             if db.tables.contains_key(&table_name) {
                 return Err(format!("Table '{}' already exists", table_name));
             }
             let mut table = Table::new(table_name.clone());
+            
             for col in columns {
                 let col_name = col.name.to_string();
                 let col_type = match col.data_type {
@@ -160,7 +164,14 @@ fn process_command(db: &mut Database, stmt: &Statement) -> Result<String, String
                     DataType::Boolean => "Bool",
                     _ => return Err(format!("Unsupported type: {:?}", col.data_type)),
                 };
-                table.columns.push((col_name, col_type.to_string()));
+                table.columns.push((col_name.clone(), col_type.to_string()));
+
+                // CHECK FOR 'UNIQUE' CONSTRAINT
+                for option in &col.options {
+                    if let ColumnOption::Unique { .. } = &option.option {
+                        table.unique_columns.push(col_name.clone());
+                    }
+                }
             }
             db.tables.insert(table_name.clone(), table);
             Ok(format!("Table '{}' created", table_name))
@@ -176,6 +187,7 @@ fn process_command(db: &mut Database, stmt: &Statement) -> Result<String, String
                     let mut count = 0;
                     for row_expr in rows {
                         let mut row_data = BTreeMap::new();
+
                         let mut cols_iter = table.columns.iter(); 
 
                         for expr in row_expr {
@@ -217,6 +229,21 @@ fn process_command(db: &mut Database, stmt: &Statement) -> Result<String, String
                             }
                             
                             row_data.insert(col_name.clone(), value);
+                        }
+                        for unique_col in &table.unique_columns {
+                            if let Some(new_val) = row_data.get(unique_col) {
+                                // Scan all existing rows
+                                for existing_row in table.data.values() {
+                                    if let Some(existing_val) = existing_row.data.get(unique_col) {
+                                        if existing_val == new_val {
+                                            return Err(format!(
+                                                "Unique constraint violation: Column '{}' already has value {:?}", 
+                                                unique_col, new_val
+                                            ));
+                                        }
+                                    }
+                                }
+                            }
                         }
                         
                         table.last_id += 1;
