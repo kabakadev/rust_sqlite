@@ -2,7 +2,7 @@ use actix_web::{post, web, App, HttpResponse, HttpServer, Responder};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
-use std::fs::{self, File};
+use std::fs::{ File};
 use std::io::BufReader;
 use std::path::Path;
 use std::sync::Mutex; // NEW: Needed for locking the DB between web requests
@@ -10,7 +10,7 @@ use std::sync::Mutex; // NEW: Needed for locking the DB between web requests
 // SQL Parser Imports
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
-use sqlparser::ast::{Statement, DataType, SetExpr, Values, ColumnOption, Join, JoinOperator, JoinConstraint, TableFactor, Expr, BinaryOperator};
+use sqlparser::ast::{Statement, DataType, SetExpr, Values, ColumnOption, JoinOperator, JoinConstraint, TableFactor, Expr, BinaryOperator};
 
 // --- DATA STRUCTURES (Same as before) ---
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -267,18 +267,25 @@ fn process_command(db: &mut Database, stmt: &Statement) -> Result<String, String
             }
         }
 
-      // DELETE (Fixed for sqlparser 0.39.0)
-        Statement::Delete { tables, selection, .. } => {
-            // 1. Check if a table is provided
-            if tables.is_empty() {
+      // DELETE (Fixed for standard 'DELETE FROM table')
+        Statement::Delete { from, tables, selection, .. } => {
+            // 1. Determine the table name
+            // Standard SQL "DELETE FROM table" uses the 'from' field.
+            // Non-standard "DELETE table FROM..." uses the 'tables' field.
+            let table_name = if !from.is_empty() {
+                match &from[0].relation {
+                    TableFactor::Table { name, .. } => name.to_string(),
+                    _ => return Err("Only simple table names supported".to_string()),
+                }
+            } else if !tables.is_empty() {
+                tables[0].to_string()
+            } else {
                 return Err("No table specified".to_string());
-            }
+            };
 
-            // 2. Get the first table name (tables is Vec<ObjectName>)
-            let name = tables[0].to_string();
-            let table = db.tables.get_mut(&name).ok_or(format!("Table '{}' not found", name))?;
+            let table = db.tables.get_mut(&table_name).ok_or(format!("Table '{}' not found", table_name))?;
 
-            // 3. Extract ID from "WHERE id = X"
+            // 2. Extract ID from "WHERE id = X"
             if let Some(Expr::BinaryOp { left, op: BinaryOperator::Eq, right }) = selection {
                 let col_name = match &**left { 
                     Expr::Identifier(i) => i.value.clone(), 
