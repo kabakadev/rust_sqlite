@@ -8,7 +8,8 @@ use std::path::Path;
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
 
-use sqlparser::ast::{Statement, DataType, SetExpr, Values, ColumnOption}; 
+
+use sqlparser::ast::{Statement, DataType, SetExpr, Values, ColumnOption, Join, JoinOperator, JoinConstraint, TableFactor, Expr, BinaryOperator};
 
 // 1. Data Types
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -257,33 +258,105 @@ fn process_command(db: &mut Database, stmt: &Statement) -> Result<String, String
         }
         
 
-        // SELECT (Fixed for 0.39.0)
+       // SELECT (With JOIN Support)
         Statement::Query(query) => {
             if let SetExpr::Select(select) = &*query.body {
-                let table_name = &select.from[0].relation; 
-                let name = table_name.to_string();
-                let table = db.tables.get(&name).ok_or(format!("Table '{}' not found", name))?;
+                // 1. Get Left Table
+                let left_table_name = match &select.from[0].relation {
+                    TableFactor::Table { name, .. } => name.to_string(),
+                    _ => return Err("Only simple table names supported".to_string()),
+                };
+                let left_table = db.tables.get(&left_table_name).ok_or(format!("Table '{}' not found", left_table_name))?;
 
-                let headers: Vec<&String> = table.columns.iter().map(|(name, _)| name).collect();
-                println!("ID | {}", headers.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(" | "));
-                println!("{}", "-".repeat(20));
+                // 2. Check for JOIN
+                if !select.from[0].joins.is_empty() {
+                    let join = &select.from[0].joins[0]; // We only handle 1 join for now
+                    
+                    // Get Right Table Name
+                    let right_table_name = match &join.relation {
+                        TableFactor::Table { name, .. } => name.to_string(),
+                        _ => return Err("Only simple table joins supported".to_string()),
+                    };
+                    let right_table = db.tables.get(&right_table_name).ok_or(format!("Table '{}' not found", right_table_name))?;
 
-                for row in table.data.values() {
-                    let mut values = vec![];
-                    for col in &headers {
-                        let val = row.data.get(*col).unwrap_or(&Value::Null);
-                        let v_str = match val {
-                            Value::Integer(i) => i.to_string(),
-                            Value::Float(f) => f.to_string(),
-                            Value::Text(t) => t.clone(),
-                            Value::Bool(b) => b.to_string(),
-                            Value::Null => "NULL".to_string(),
-                        };
-                        values.push(v_str);
+                    // Parse the ON condition: ON left.col = right.col
+                    let (left_col_name, right_col_name) = match &join.join_operator {
+                        JoinOperator::Inner(JoinConstraint::On(Expr::BinaryOp { left, op: BinaryOperator::Eq, right })) => {
+                            // Helper to extract "col" from "table.col" or just "col"
+                            fn extract_col(expr: &Expr) -> Option<String> {
+                                match expr {
+                                    Expr::Identifier(ident) => Some(ident.value.clone()),
+                                    Expr::CompoundIdentifier(idents) => Some(idents.last()?.value.clone()),
+                                    _ => None
+                                }
+                            }
+                            match (extract_col(left), extract_col(right)) {
+                                (Some(l), Some(r)) => (l, r),
+                                _ => return Err("Unsupported ON condition".to_string()),
+                            }
+                        },
+                        _ => return Err("Only INNER JOIN ... ON table.col = table.col supported".to_string()),
+                    };
+
+                    // 3. Print Combined Headers
+                    let mut headers = vec![];
+                    for (col, _) in &left_table.columns { headers.push(format!("{}.{}", left_table_name, col)); }
+                    for (col, _) in &right_table.columns { headers.push(format!("{}.{}", right_table_name, col)); }
+                    println!("{}", headers.join(" | "));
+                    println!("{}", "-".repeat(headers.len() * 10));
+
+                    // 4. NESTED LOOP JOIN (O(N*M) - Slow but simple)
+                    let mut found_count = 0;
+                    for left_row in left_table.data.values() {
+                        for right_row in right_table.data.values() {
+                            
+                            // Check Condition
+                            let l_val = left_row.data.get(&left_col_name).unwrap_or(&Value::Null);
+                            let r_val = right_row.data.get(&right_col_name).unwrap_or(&Value::Null);
+
+                            if l_val != &Value::Null && l_val == r_val {
+                                // MATCH FOUND! Merge and Print
+                                let mut row_strs = vec![];
+                                
+                                // Print Left Columns
+                                for (col, _) in &left_table.columns {
+                                    row_strs.push(format!("{:?}", left_row.data.get(col).unwrap_or(&Value::Null)));
+                                }
+                                // Print Right Columns
+                                for (col, _) in &right_table.columns {
+                                    row_strs.push(format!("{:?}", right_row.data.get(col).unwrap_or(&Value::Null)));
+                                }
+                                println!("{}", row_strs.join(" | "));
+                                found_count += 1;
+                            }
+                        }
                     }
-                    println!("{}  | {}", row.id, values.join(" | "));
+                    Ok(format!("Returned {} joined rows", found_count))
+
+                } else {
+                    // --- OLD LOGIC (No Join) ---
+                    let headers: Vec<&str> = left_table.columns.iter().map(|(name, _)| name.as_str()).collect();
+                    println!("ID | {}", headers.join(" | "));
+                    println!("{}", "-".repeat(20));
+
+                    for row in left_table.data.values() {
+                        let mut values = vec![];
+                        for col in &headers {
+                            let val = row.data.get(*col).unwrap_or(&Value::Null);
+                            // Simple Display
+                            let v_str = match val {
+                                Value::Integer(i) => i.to_string(),
+                                Value::Float(f) => f.to_string(),
+                                Value::Text(t) => t.clone(),
+                                Value::Bool(b) => b.to_string(),
+                                Value::Null => "NULL".to_string(),
+                            };
+                            values.push(v_str);
+                        }
+                        println!("{}  | {}", row.id, values.join(" | "));
+                    }
+                    Ok(format!("Returned {} rows", left_table.data.len()))
                 }
-                Ok(format!("Returned {} rows", table.data.len()))
             } else {
                 Err("Only SELECT statements supported".to_string())
             }
