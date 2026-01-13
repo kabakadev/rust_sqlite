@@ -28,32 +28,12 @@
               "Bool": true
             },
             "name": {
-              "Text": "Huey"
+              "Text": "huey"
             }
           }
         }
       },
       "last_id": 1
-    },
-    "houses": {
-      "name": "houses",
-      "columns": [
-        [
-          "id",
-          "Integer"
-        ],
-        [
-          "name",
-          "Text"
-        ],
-        [
-          "is_active",
-          "Bool"
-        ]
-      ],
-      "unique_columns": [],
-      "data": {},
-      "last_id": 0
     }
   }
 }

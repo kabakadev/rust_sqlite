@@ -247,16 +247,46 @@ fn process_command(db: &mut Database, stmt: &Statement) -> Result<String, String
                     }
                     Ok(output_lines.join("\n"))
 
-                } else {
+              } else {
                     // --- STANDARD SELECT (No Join) ---
-                    let headers: Vec<&str> = left_table.columns.iter().map(|(name, _)| name.as_str()).collect();
+                    
+                    // 1. Determine which columns to show
+                    let all_columns: Vec<String> = left_table.columns.iter().map(|(n, _)| n.clone()).collect();
+                    let mut target_columns = Vec::new();
+
+                    for item in &select.projection {
+                        match item {
+                            // If "SELECT *", take everything
+                            sqlparser::ast::SelectItem::Wildcard(_) => {
+                                target_columns = all_columns.clone();
+                                break;
+                            },
+                            // If "SELECT name", take just that column
+                            sqlparser::ast::SelectItem::UnnamedExpr(Expr::Identifier(ident)) => {
+                                let col_name = ident.value.clone();
+                                if all_columns.contains(&col_name) {
+                                    target_columns.push(col_name); 
+                                } else {
+                                     return Err(format!("Column '{}' not found", col_name));
+                                }
+                            },
+                            _ => return Err("Only SELECT * or SELECT col supported".to_string()),
+                        }
+                    }
+
+                    // 2. Print Headers
+                    let header_display: Vec<&str> = target_columns.iter().map(|s| s.as_str()).collect();
+                    
+
+                    // 3. Print Rows (Only the requested columns)
                     let mut output_lines = Vec::new();
-                    output_lines.push(format!("ID | {}", headers.join(" | ")));
+                    // Note: We reconstruct the output string for the Server response too
+                    output_lines.push(format!("ID | {}", header_display.join(" | ")));
 
                     for row in left_table.data.values() {
                         let mut values = vec![];
-                        for col in &headers {
-                            let val = row.data.get(*col).unwrap_or(&Value::Null);
+                        for col in &target_columns {
+                            let val = row.data.get(col).unwrap_or(&Value::Null);
                             let v_str = match val {
                                 Value::Integer(i) => i.to_string(),
                                 Value::Float(f) => f.to_string(),
@@ -266,7 +296,8 @@ fn process_command(db: &mut Database, stmt: &Statement) -> Result<String, String
                             };
                             values.push(v_str);
                         }
-                        output_lines.push(format!("{}  | {}", row.id, values.join(" | ")));
+                        
+                        output_lines.push(format!("{}  | {}", row.id, values.join(" | "))); // Save for Server
                     }
                     Ok(output_lines.join("\n"))
                 }
