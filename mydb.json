@@ -1,7 +1,7 @@
 {
   "tables": {
-    "products": {
-      "name": "products",
+    "users": {
+      "name": "users",
       "columns": [
         [
           "id",
@@ -12,51 +12,48 @@
           "Text"
         ],
         [
-          "price",
-          "Float"
-        ],
-        [
-          "stock",
-          "Integer"
-        ],
-        [
-          "category_id",
-          "Integer"
+          "is_active",
+          "Bool"
         ]
       ],
       "unique_columns": [],
-      "data": {},
-      "last_id": 45057
-    },
-    "categories": {
-      "name": "categories",
-      "columns": [
-        [
-          "id",
-          "Integer"
-        ],
-        [
-          "name",
-          "Text"
-        ]
-      ],
-      "unique_columns": [
-        "name"
-      ],
       "data": {
-        "7641": {
-          "id": 7641,
+        "1": {
+          "id": 1,
           "data": {
             "id": {
-              "Integer": 7641
+              "Integer": 1
+            },
+            "is_active": {
+              "Bool": true
             },
             "name": {
-              "Text": "Tech"
+              "Text": "Huey"
             }
           }
         }
       },
-      "last_id": 7641
+      "last_id": 1
+    },
+    "houses": {
+      "name": "houses",
+      "columns": [
+        [
+          "id",
+          "Integer"
+        ],
+        [
+          "name",
+          "Text"
+        ],
+        [
+          "is_active",
+          "Bool"
+        ]
+      ],
+      "unique_columns": [],
+      "data": {},
+      "last_id": 0
     }
   }
 }

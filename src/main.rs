@@ -95,6 +95,7 @@ fn process_command(db: &mut Database, stmt: &Statement) -> Result<String, String
                     DataType::Float(_) => "Float",
                     DataType::Text => "Text",
                     DataType::Boolean => "Bool",
+                    DataType::Bool => "Bool",
                     _ => return Err(format!("Unsupported type: {:?}", col.data_type)),
                 };
                 table.columns.push((col_name.clone(), col_type.to_string()));
